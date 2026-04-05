@@ -86,7 +86,7 @@ bash scripts/pipeline/run_stage1_all.sh
 ## 7. 版本与阶段成果
 
 - Stage-1（传统方法基线）见：
-  - `changelog/v1.0.0.md`
+  - `changelog/stage1_v1.0.0_rgbd_slam_loop_pgo.md`
   - `docs/BUILD_LOG_COMPRESSED.md`
 
 ## 8. 已知问题（下一阶段重点）
