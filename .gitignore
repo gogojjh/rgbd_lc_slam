@@ -1,0 +1,28 @@
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# ---- Editors ----
+.vscode/
+.idea/
+
+# ---- Local data & results (keep repo small) ----
+data/
+results/
+outputs/
+logs/
+
+# allow small placeholders
+!data/.gitkeep
+!results/.gitkeep
+!outputs/.gitkeep
+!logs/.gitkeep
+
+# misc
+*.zip
+*.png
+*.pdf
+*.mp4

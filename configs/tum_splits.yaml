@@ -1,0 +1,12 @@
+tum_rgbd_root: data/tum_rgbd
+
+# Split v1 (subject to refinement with literature references)
+train:
+  - fr1/desk
+  - fr1/room
+  - fr1/xyz
+  - fr2/desk
+  - fr2/xyz
+test:
+  - fr3/long_office_household
+  - fr3/sitting_static

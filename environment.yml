@@ -1,0 +1,37 @@
+name: rgbd_lc_slam
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - pyyaml
+  - tqdm
+  - matplotlib
+  - opencv
+  - pip:
+      - open3d
+      - evo
+      - gtsam
+      - torch
+      - torchvision
+      - torchaudio
+      - lightning
+      - kornia
+      - einops
+      - loguru
+      - rich
+      - imageio
+      - imageio-ffmpeg
+      - gitpython
+      - typing_extensions
+      - pytest
+      - ruff
+      - black
+      - isort
+      - pre-commit
+      - lightglue
