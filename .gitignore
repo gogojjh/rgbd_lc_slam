@@ -10,10 +10,10 @@ __pycache__/
 .idea/
 
 # ---- Local data & results (keep repo small) ----
-data/
-results/
-outputs/
-logs/
+data/**
+results/**
+outputs/**
+logs/**
 
 # allow small placeholders
 !data/.gitkeep
@@ -21,7 +21,7 @@ logs/
 !outputs/.gitkeep
 !logs/.gitkeep
 
-# misc
+# misc large artifacts
 *.zip
 *.png
 *.pdf
