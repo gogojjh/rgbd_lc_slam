@@ -93,3 +93,14 @@ bash scripts/pipeline/run_stage1_all.sh
 
 - 部分序列 ATE/RPE 偏大；并存在“loop+PGO 反而退化”的失败案例。
 - 下一步需要强化回环约束 gating（多阶段验证、鲁棒核、switchable constraints）与前端稳健性。
+
+### 当前明显的结构问题
+
+- frontend 目录基本是空的，但实际前端跟踪逻辑写在 harness/run_sequence.py 里，这说明“前端”还没有真正模块化。
+- harness/run_sequence.py 和 harness/run_sequence_pg.py 存在较多重复代码，例如图像读取、点云构建、子图构建、关键帧判定，后续维护会有同步修改风险。
+- 目前没有 tests/，说明结构虽清楚，但缺少回归保护。
+- scripts/、outputs/、results/ 比较重，工程偏实验驱动；如果后续继续扩展，建议把实验脚本和核心库边界再拉开。
+
+### 一句话评价
+
+这是一个“算法链路已经成型、工程抽象还差最后一步”的结构：回环和后端模块化程度不错，但前端仍嵌在运行脚本里，下一步最值得做的是把 tracking/front-end 从 harness 中抽成真正的 frontend 模块。
