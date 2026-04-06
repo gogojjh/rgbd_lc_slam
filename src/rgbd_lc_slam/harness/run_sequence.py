@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from rgbd_lc_slam.frontend import RGBDFrame, RGBDICPFrontend, RGBDTrackingConfig
-from rgbd_lc_slam.harness.common_rgbd import default_intrinsics, load_rgb_depth
+from rgbd_lc_slam.io.rgbd_io import default_intrinsics, load_rgb_depth
 from rgbd_lc_slam.io.tum_reader import associate_by_time, load_tum_sequence
 from rgbd_lc_slam.io.trajectory_io import write_tum_trajectory
 
