@@ -69,6 +69,68 @@ class LoopClosureModule:
 
         self._frames: Dict[int, FrameData] = {}
 
+        # Phase0: diagnostics / funnel stats (does NOT affect algorithm decisions)
+        self._diag: dict = {
+            "num_queries": 0,
+            "candidates_total": 0,
+            "candidates_after_score": 0,
+            "verified_total": 0,
+            "loops_accepted": 0,
+            "fail_reasons": {
+                "min_matches": 0,
+                "pose_estimation": 0,
+                "trans": 0,
+                "rot": 0,
+                "rmse": 0,
+            },
+            "values": {
+                "retrieval_score": [],
+                "matches": [],
+                "inliers": [],
+                "inlier_ratio": [],
+                "rmse_m": [],
+                "trans_m": [],
+                "rot_deg": [],
+            },
+            "per_frame": [],
+        }
+
+    def get_diagnostics(self) -> dict:
+        """Return JSON-serializable diagnostics collected during this run."""
+
+        def _to_float_list(xs):
+            return [float(x) for x in xs]
+
+        d = {
+            "num_queries": int(self._diag["num_queries"]),
+            "candidates_total": int(self._diag["candidates_total"]),
+            "candidates_after_score": int(self._diag["candidates_after_score"]),
+            "verified_total": int(self._diag["verified_total"]),
+            "loops_accepted": int(self._diag["loops_accepted"]),
+            "fail_reasons": {k: int(v) for k, v in self._diag["fail_reasons"].items()},
+            "values": {
+                "retrieval_score": _to_float_list(self._diag["values"]["retrieval_score"]),
+                "matches": [int(x) for x in self._diag["values"]["matches"]],
+                "inliers": [int(x) for x in self._diag["values"]["inliers"]],
+                "inlier_ratio": _to_float_list(self._diag["values"]["inlier_ratio"]),
+                "rmse_m": _to_float_list(self._diag["values"]["rmse_m"]),
+                "trans_m": _to_float_list(self._diag["values"]["trans_m"]),
+                "rot_deg": _to_float_list(self._diag["values"]["rot_deg"]),
+            },
+            "per_frame": self._diag["per_frame"],
+        }
+        return d
+
+    def _diag_inc(self, key: str, by: int = 1) -> None:
+        self._diag[key] = int(self._diag.get(key, 0)) + int(by)
+
+    def _diag_fail(self, reason: str) -> None:
+        fr = self._diag["fail_reasons"]
+        fr[reason] = int(fr.get(reason, 0)) + 1
+
+    def _diag_add_value(self, name: str, v) -> None:
+        self._diag["values"][name].append(v)
+
     def add_frame(self, frame_id: int, rgb: np.ndarray, depth_m: np.ndarray) -> None:
         desc = self.netvlad.compute(rgb)
         self.db.add(frame_id, desc)
@@ -87,6 +149,8 @@ class LoopClosureModule:
         if len(self.db) == 0:
             return None
 
+        self._diag_inc("num_queries", 1)
+
         desc = self.netvlad.compute(rgb)
         candidates = self.db.query(
             desc,
@@ -94,8 +158,24 @@ class LoopClosureModule:
             exclude_ids=self._exclude_recent_ids(frame_id),
         )
 
+        n_total = int(len(candidates))
+        n_pass_score = int(sum(1 for c in candidates if c.score >= self.cfg.retrieval_min_score))
+        self._diag_inc("candidates_total", n_total)
+        self._diag_inc("candidates_after_score", n_pass_score)
+
+        frame_diag = {
+            "frame_id": int(frame_id),
+            "n_candidates": n_total,
+            "n_pass_score": n_pass_score,
+            "n_verified": 0,
+            "accepted": False,
+            "accepted_i": None,
+        }
+
         tried = 0
         for c in candidates:
+            self._diag_add_value("retrieval_score", float(c.score))
+
             if c.score < self.cfg.retrieval_min_score:
                 continue
             ref = self._frames.get(c.frame_id, None)
@@ -103,6 +183,9 @@ class LoopClosureModule:
                 continue
 
             tried += 1
+            self._diag_inc("verified_total", 1)
+            frame_diag["n_verified"] += 1
+
             constraint = self._verify_and_build(
                 i=c.frame_id,
                 j=frame_id,
@@ -113,11 +196,16 @@ class LoopClosureModule:
                 retrieval_score=c.score,
             )
             if constraint is not None:
+                self._diag_inc("loops_accepted", 1)
+                frame_diag["accepted"] = True
+                frame_diag["accepted_i"] = int(c.frame_id)
+                self._diag["per_frame"].append(frame_diag)
                 return constraint
 
             if tried >= self.cfg.max_verify_per_frame:
                 break
 
+        self._diag["per_frame"].append(frame_diag)
         return None
 
     def process_frame(self, frame_id: int, rgb: np.ndarray, depth_m: np.ndarray) -> Optional[LoopConstraint]:
@@ -139,7 +227,10 @@ class LoopClosureModule:
     ) -> Optional[LoopConstraint]:
         # 1) local feature matching
         m = self.matcher.match(rgb_i, rgb_j)
-        if m.kpts0.shape[0] < self.cfg.min_matches:
+        n_matches = int(m.kpts0.shape[0])
+        self._diag_add_value("matches", n_matches)
+        if n_matches < self.cfg.min_matches:
+            self._diag_fail("min_matches")
             return None
 
         # 2) relative pose estimation
@@ -153,22 +244,33 @@ class LoopClosureModule:
             min_inliers=self.cfg.min_inliers,
         )
         if est is None:
+            self._diag_fail("pose_estimation")
             return None
 
         T_ij = est.T_ij
         num_inliers = int(est.inliers.sum())
         rmse = float(est.rmse_m)
 
+        self._diag_add_value("inliers", num_inliers)
+        self._diag_add_value("inlier_ratio", float(num_inliers) / float(max(n_matches, 1)))
+        self._diag_add_value("rmse_m", rmse)
+
         # 3) gating / sanity checks
         t = T_ij[:3, 3]
         trans = float(np.linalg.norm(t))
         rot_deg = rot_angle_deg(T_ij[:3, :3])
 
+        self._diag_add_value("trans_m", trans)
+        self._diag_add_value("rot_deg", float(rot_deg))
+
         if trans > self.cfg.max_translation_m:
+            self._diag_fail("trans")
             return None
         if rot_deg > self.cfg.max_rotation_deg:
+            self._diag_fail("rot")
             return None
         if np.isfinite(rmse) and rmse > self.cfg.max_rmse_m:
+            self._diag_fail("rmse")
             return None
 
         # 4) optional ICP refinement

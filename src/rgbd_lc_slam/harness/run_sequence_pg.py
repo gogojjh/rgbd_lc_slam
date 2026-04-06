@@ -178,6 +178,13 @@ def main() -> None:
     }
     (out_dir / "timing_pg.json").write_text(json.dumps(timing, indent=2), encoding="utf-8")
 
+    # Phase0: loop diagnostics
+    if lc is not None:
+        (out_dir / "loop_stats.json").write_text(
+            json.dumps(lc.get_diagnostics(), indent=2),
+            encoding="utf-8",
+        )
+
     print("wrote:", traj_track)
     print("wrote:", traj_pg)
     print("timing:", timing)
