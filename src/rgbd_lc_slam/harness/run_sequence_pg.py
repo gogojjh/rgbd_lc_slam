@@ -41,6 +41,12 @@ def main() -> None:
     ap.add_argument("--exclude_recent", type=int, default=30)
     ap.add_argument("--retrieval_top_k", type=int, default=10)
     ap.add_argument("--retrieval_min_score", type=float, default=0.75)
+    ap.add_argument(
+        "--loop_every_kf",
+        type=int,
+        default=5,
+        help="Run loop detection every K keyframes (Phase1 throttling).",
+    )
 
     args = ap.parse_args()
 
@@ -111,12 +117,17 @@ def main() -> None:
         t_loop_ms.append((time.perf_counter() - t0l) * 1000.0)
 
     num_loops = 0
+    kf_count = 1  # fid=0 is a keyframe by construction
+    last_loop_kf_count = -10**9
 
     for fid, (t_rgb, rgb_rel, _, depth_rel) in enumerate(pairs[1:], start=1):
         rgb, depth = load_rgb_depth(seq.root / rgb_rel, seq.root / depth_rel, flip_y=flip_y)
 
         Twc_prev = Twc_tracking[-1]
         r = fe.track(RGBDFrame(fid=fid, stamp=float(t_rgb), rgb=rgb, depth_m=depth))
+
+        if r.is_keyframe:
+            kf_count += 1
 
         stamps.append(r.stamp)
         Twc_tracking.append(r.Twc)
@@ -131,7 +142,16 @@ def main() -> None:
         # Loop closure factor
         if lc is not None:
             t0l = time.perf_counter()
-            c = lc.process_frame(fid, rgb, depth)
+
+            # Phase1: only attempt loop closure on keyframes, and only every K keyframes.
+            do_loop = bool(r.is_keyframe) and (kf_count - last_loop_kf_count >= int(args.loop_every_kf))
+            c = None
+            if do_loop:
+                c = lc.process_frame(fid, rgb, depth)
+                last_loop_kf_count = kf_count
+            else:
+                lc.add_frame(fid, rgb, depth)
+
             t_loop_ms.append((time.perf_counter() - t0l) * 1000.0)
             if c is not None:
                 backend.add_between(
