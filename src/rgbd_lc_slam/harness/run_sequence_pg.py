@@ -5,12 +5,10 @@ import json
 from pathlib import Path
 
 import numpy as np
-import open3d as o3d
 
 from rgbd_lc_slam.backend import ISAM2BackendConfig, PoseGraphISAM2Backend
-from rgbd_lc_slam.harness.common_rgbd import default_intrinsics, load_rgb_depth, rgbd_from_arrays
-from rgbd_lc_slam.harness.common_submap import build_submap, should_add_keyframe
-from rgbd_lc_slam.harness.timers import Timer
+from rgbd_lc_slam.frontend import RGBDFrame, RGBDICPFrontend, RGBDTrackingConfig
+from rgbd_lc_slam.harness.common_rgbd import default_intrinsics, load_rgb_depth
 from rgbd_lc_slam.io.tum_reader import associate_by_time, load_tum_sequence
 from rgbd_lc_slam.io.trajectory_io import write_tum_trajectory
 from rgbd_lc_slam.loop_closure import CameraIntrinsics, LoopClosureConfig, LoopClosureModule
@@ -56,19 +54,21 @@ def main() -> None:
     out_dir: Path = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Setup frontend
+    cfg = RGBDTrackingConfig(
+        voxel=args.voxel,
+        submap_k=args.submap_k,
+        keyframe_trans=args.keyframe_trans,
+        keyframe_rot_deg=args.keyframe_rot_deg,
+    )
+    fe = RGBDICPFrontend(intrinsic=intrinsic_o3d, cfg=cfg)
+
     stamps: list[float] = []
     Twc_tracking: list[np.ndarray] = []
+    tracking_ms_list: list[float] = []
 
-    # Local submap (same as baseline)
-    keyframe_pcds: list[o3d.geometry.PointCloud] = []
-    keyframe_Twc: list[np.ndarray] = []
-
-    # Init pose
-    Twc = np.eye(4)
-
-    t_track = Timer()
-    t_backend = Timer()
-    t_loop = Timer()
+    t_backend_ms: list[float] = []
+    t_loop_ms: list[float] = []
 
     # Setup backend
     backend = PoseGraphISAM2Backend(ISAM2BackendConfig())
@@ -76,113 +76,70 @@ def main() -> None:
     # Setup loop module
     lc = None
     if args.enable_loop:
-        cfg = LoopClosureConfig(
+        cfg_lc = LoopClosureConfig(
             retrieval_top_k=args.retrieval_top_k,
             retrieval_min_score=args.retrieval_min_score,
             exclude_recent=args.exclude_recent,
         )
         lc = LoopClosureModule(
             intr_lc,
-            cfg,
+            cfg_lc,
             netvlad_weights_path=args.netvlad_weights,
             use_faiss=True,
             device=args.device,
         )
 
     # Seed first frame
-    t0, rgb_rel, td0, depth_rel = pairs[0]
+    t0, rgb_rel, _, depth_rel = pairs[0]
     rgb0, depth0 = load_rgb_depth(seq.root / rgb_rel, seq.root / depth_rel, flip_y=flip_y)
-    rgbd0 = rgbd_from_arrays(rgb0, depth0)
-    pcd0 = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd0, intrinsic_o3d)
-    pcd0 = pcd0.voxel_down_sample(args.voxel)
-    pcd0.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=args.voxel * 2.5, max_nn=30))
-    keyframe_pcds.append(pcd0)
-    keyframe_Twc.append(Twc.copy())
+    r0 = fe.seed(RGBDFrame(fid=0, stamp=float(t0), rgb=rgb0, depth_m=depth0))
 
-    stamps.append(float(t0))
-    Twc_tracking.append(Twc.copy())
+    stamps.append(r0.stamp)
+    Twc_tracking.append(r0.Twc)
+    tracking_ms_list.append(r0.tracking_ms)
 
     # prior at node 0
-    t_backend.tic()
-    backend.add_prior(0, Twc)
-    t_backend.toc()
+    import time
+
+    t0b = time.perf_counter()
+    backend.add_prior(0, r0.Twc)
+    t_backend_ms.append((time.perf_counter() - t0b) * 1000.0)
 
     if lc is not None:
-        # add first frame to DB
-        t_loop.tic()
+        t0l = time.perf_counter()
         lc.add_frame(0, rgb0, depth0)
-        t_loop.toc()
+        t_loop_ms.append((time.perf_counter() - t0l) * 1000.0)
 
     num_loops = 0
 
-    for fid, (t_rgb, rgb_rel, t_d, depth_rel) in enumerate(pairs[1:], start=1):
+    for fid, (t_rgb, rgb_rel, _, depth_rel) in enumerate(pairs[1:], start=1):
         rgb, depth = load_rgb_depth(seq.root / rgb_rel, seq.root / depth_rel, flip_y=flip_y)
-        rgbd = rgbd_from_arrays(rgb, depth)
-        src = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic_o3d)
-        src = src.voxel_down_sample(args.voxel)
-        if len(src.points) == 0:
-            continue
-        src.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=args.voxel * 2.5, max_nn=30))
 
-        submap = build_submap(keyframe_pcds, submap_k=args.submap_k, voxel=args.voxel)
-        if len(submap.points) == 0:
-            stamps.append(float(t_rgb))
-            Twc_tracking.append(Twc.copy())
-            continue
+        Twc_prev = Twc_tracking[-1]
+        r = fe.track(RGBDFrame(fid=fid, stamp=float(t_rgb), rgb=rgb, depth_m=depth))
 
-        init = Twc.copy()
-
-        t_track.tic()
-        result = o3d.pipelines.registration.registration_icp(
-            src,
-            submap,
-            max_correspondence_distance=args.voxel * 2.5,
-            init=init,
-            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPlane(),
-            criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=30),
-        )
-        t_track.toc()
-
-        Twc_prev = Twc
-        Twc = result.transformation
-
-        stamps.append(float(t_rgb))
-        Twc_tracking.append(Twc.copy())
-
-        # Add keyframe to map
-        if should_add_keyframe(
-            keyframe_Twc[-1],
-            Twc,
-            keyframe_trans=args.keyframe_trans,
-            keyframe_rot_deg=args.keyframe_rot_deg,
-        ):
-            src_w = src.transform(Twc)
-            keyframe_pcds.append(src_w)
-            keyframe_Twc.append(Twc.copy())
+        stamps.append(r.stamp)
+        Twc_tracking.append(r.Twc)
+        tracking_ms_list.append(r.tracking_ms)
 
         # Odometry factor: between = inv(Twc_prev) @ Twc
-        T_odom = np.linalg.inv(Twc_prev) @ Twc
-        t_backend.tic()
-        backend.add_between(fid - 1, fid, T_odom, initial_Twc_j=Twc)
-        t_backend.toc()
+        T_odom = np.linalg.inv(Twc_prev) @ r.Twc
+        t0b = time.perf_counter()
+        backend.add_between(fid - 1, fid, T_odom, initial_Twc_j=r.Twc)
+        t_backend_ms.append((time.perf_counter() - t0b) * 1000.0)
 
         # Loop closure factor
         if lc is not None:
-            t_loop.tic()
+            t0l = time.perf_counter()
             c = lc.process_frame(fid, rgb, depth)
-            t_loop.toc()
+            t_loop_ms.append((time.perf_counter() - t0l) * 1000.0)
             if c is not None:
-                # LoopConstraint.T_ij maps points from frame i coordinates to frame j coordinates:
-                #   p_j = T_ij @ p_i
-                # Our backend uses Pose3 variable Twc (camera->world). GTSAM BetweenFactor enforces
-                #   between(Twc_i, Twc_j) = inv(Twc_i) @ Twc_j
-                # which maps points from frame j to frame i coordinates. Therefore we must invert.
                 backend.add_between(
                     c.i,
                     c.j,
                     np.linalg.inv(c.T_ij),
                     information=c.information,
-                    initial_Twc_j=Twc,
+                    initial_Twc_j=r.Twc,
                 )
                 num_loops += 1
 
@@ -200,31 +157,23 @@ def main() -> None:
     traj_pg = out_dir / "traj_est_pg_tum.txt"
     write_tum_trajectory(traj_pg, stamps_opt, Twc_opt_list)
 
+    def _stats(arr: list[float]):
+        if len(arr) == 0:
+            return {"count": 0}
+        a = np.asarray(arr, dtype=np.float64)
+        return {
+            "count": int(a.size),
+            "p50": float(np.percentile(a, 50)),
+            "p90": float(np.percentile(a, 90)),
+            "p99": float(np.percentile(a, 99)),
+            "mean": float(a.mean()),
+            "max": float(a.max()),
+        }
+
     timing = {
-        "tracking_ms": {
-            "count": t_track.stats().count,
-            "p50": t_track.stats().p50_ms,
-            "p90": t_track.stats().p90_ms,
-            "p99": t_track.stats().p99_ms,
-            "mean": t_track.stats().mean_ms,
-            "max": t_track.stats().max_ms,
-        },
-        "backend_ms": {
-            "count": t_backend.stats().count,
-            "p50": t_backend.stats().p50_ms,
-            "p90": t_backend.stats().p90_ms,
-            "p99": t_backend.stats().p99_ms,
-            "mean": t_backend.stats().mean_ms,
-            "max": t_backend.stats().max_ms,
-        },
-        "loop_ms": {
-            "count": t_loop.stats().count,
-            "p50": t_loop.stats().p50_ms,
-            "p90": t_loop.stats().p90_ms,
-            "p99": t_loop.stats().p99_ms,
-            "mean": t_loop.stats().mean_ms,
-            "max": t_loop.stats().max_ms,
-        },
+        "tracking_ms": _stats(tracking_ms_list),
+        "backend_ms": _stats(t_backend_ms),
+        "loop_ms": _stats(t_loop_ms),
         "num_loops": int(num_loops),
     }
     (out_dir / "timing_pg.json").write_text(json.dumps(timing, indent=2), encoding="utf-8")
