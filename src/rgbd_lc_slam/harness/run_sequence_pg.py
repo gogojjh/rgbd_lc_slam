@@ -4,16 +4,12 @@ import argparse
 import json
 from pathlib import Path
 
-import cv2
 import numpy as np
 import open3d as o3d
 
 from rgbd_lc_slam.backend import ISAM2BackendConfig, PoseGraphISAM2Backend
-from rgbd_lc_slam.harness.run_sequence import (
-    default_intrinsics,
-    load_rgb_depth,
-    rgbd_from_arrays,
-)
+from rgbd_lc_slam.harness.common_rgbd import default_intrinsics, load_rgb_depth, rgbd_from_arrays
+from rgbd_lc_slam.harness.common_submap import build_submap, should_add_keyframe
 from rgbd_lc_slam.harness.timers import Timer
 from rgbd_lc_slam.io.tum_reader import associate_by_time, load_tum_sequence
 from rgbd_lc_slam.io.trajectory_io import write_tum_trajectory
@@ -74,27 +70,6 @@ def main() -> None:
     t_backend = Timer()
     t_loop = Timer()
 
-    def build_submap() -> o3d.geometry.PointCloud:
-        if not keyframe_pcds:
-            return o3d.geometry.PointCloud()
-        pcd = o3d.geometry.PointCloud()
-        for p in keyframe_pcds[-args.submap_k :]:
-            pcd += p
-        if len(pcd.points) > 0:
-            pcd = pcd.voxel_down_sample(args.voxel)
-            pcd.estimate_normals(
-                o3d.geometry.KDTreeSearchParamHybrid(radius=args.voxel * 2.5, max_nn=30)
-            )
-        return pcd
-
-    def should_add_keyframe(T_prev: np.ndarray, T_cur: np.ndarray) -> bool:
-        dT = np.linalg.inv(T_prev) @ T_cur
-        trans = np.linalg.norm(dT[:3, 3])
-        R = dT[:3, :3]
-        angle = np.arccos(np.clip((np.trace(R) - 1) / 2, -1.0, 1.0))
-        angle_deg = float(angle * 180.0 / np.pi)
-        return (trans > args.keyframe_trans) or (angle_deg > args.keyframe_rot_deg)
-
     # Setup backend
     backend = PoseGraphISAM2Backend(ISAM2BackendConfig())
 
@@ -149,7 +124,7 @@ def main() -> None:
             continue
         src.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=args.voxel * 2.5, max_nn=30))
 
-        submap = build_submap()
+        submap = build_submap(keyframe_pcds, submap_k=args.submap_k, voxel=args.voxel)
         if len(submap.points) == 0:
             stamps.append(float(t_rgb))
             Twc_tracking.append(Twc.copy())
@@ -175,7 +150,12 @@ def main() -> None:
         Twc_tracking.append(Twc.copy())
 
         # Add keyframe to map
-        if should_add_keyframe(keyframe_Twc[-1], Twc):
+        if should_add_keyframe(
+            keyframe_Twc[-1],
+            Twc,
+            keyframe_trans=args.keyframe_trans,
+            keyframe_rot_deg=args.keyframe_rot_deg,
+        ):
             src_w = src.transform(Twc)
             keyframe_pcds.append(src_w)
             keyframe_Twc.append(Twc.copy())
