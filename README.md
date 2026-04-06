@@ -14,14 +14,22 @@
 
 ## 2. 仓库结构
 
-- `src/rgbd_lc_slam/`：核心库代码（前端/回环/后端/评估）。
-- `configs/`：数据集/序列配置（如 TUM splits）。
+- `src/rgbd_lc_slam/`：核心库代码（frontend/loop_closure/backend/io/eval/harness/cli）。
+  - `frontend/`：RGB-D tracking、关键帧策略、子图构建等。
+  - `loop_closure/`：检索（NetVLAD）+ 匹配（SuperPoint/LightGlue）+ 位姿估计/ICP refine。
+  - `backend/`：GTSAM iSAM2 pose graph 后端。
+  - `io/`：数据读取与轨迹 I/O（TUM/ICL-NUIM 兼容读取，TUM trajectory 写出）。
+  - `harness/`：实验运行入口（目前仍是主要入口；负责串起 frontend/loop/backend 并落盘结果）。
+  - `cli/`：命令行入口（薄封装，转发到 harness，便于以后稳定 CLI 兼容性）。
+  - `eval/`：轻量评估工具（不替代 `evo`）。
 - `scripts/`：可复现实验脚本
   - `scripts/datasets/`：下载与数据准备
   - `scripts/runs/`：批量运行 baseline / loop+PGO
   - `scripts/eval/`：evo 指标收集与结果汇总
   - `scripts/viz/`：结果可视化与图片打包
   - `scripts/pipeline/`：一键流水线入口（串起 run→eval→summary）
+- `.github/workflows/pytest.yml`：最小 pytest CI（仅跑轻量单元测试）。
+- `tests/`：单元测试（避免重依赖；open3d 不可用时会 skip）。
 - `changelog/`：版本化变更记录（中文）。
 - `docs/`：构建过程与实现记录（压缩版）。
 
@@ -42,11 +50,11 @@ conda activate rgbd_lc_slam
 ## 4. 快速上手（单序列）
 
 ```bash
-# baseline
-python -m rgbd_lc_slam.harness.run_sequence --help
+# baseline（推荐用 cli 入口；目前内部仍转发到 harness）
+python -m rgbd_lc_slam.cli.run_sequence --help
 
 # loop+PGO
-python -m rgbd_lc_slam.harness.run_sequence_pg --help
+python -m rgbd_lc_slam.cli.run_sequence_pg --help
 ```
 
 ## 5. 批量跑通 Stage-1（推荐）
@@ -91,16 +99,23 @@ bash scripts/pipeline/run_stage1_all.sh
 
 ## 8. 已知问题（下一阶段重点）
 
-- 部分序列 ATE/RPE 偏大；并存在“loop+PGO 反而退化”的失败案例。
-- 下一步需要强化回环约束 gating（多阶段验证、鲁棒核、switchable constraints）与前端稳健性。
+### 8.1 结果层面
 
-### 当前明显的结构问题
+- 部分序列 ATE/RPE 偏大；并存在“loop+PGO 反而退化”的失败案例（典型原因是错误/弱约束回环导致的图优化崩坏）。
 
-- frontend 目录基本是空的，但实际前端跟踪逻辑写在 harness/run_sequence.py 里，这说明“前端”还没有真正模块化。
-- harness/run_sequence.py 和 harness/run_sequence_pg.py 存在较多重复代码，例如图像读取、点云构建、子图构建、关键帧判定，后续维护会有同步修改风险。
-- 目前没有 tests/，说明结构虽清楚，但缺少回归保护。
-- scripts/、outputs/、results/ 比较重，工程偏实验驱动；如果后续继续扩展，建议把实验脚本和核心库边界再拉开。
+### 8.2 工程/依赖层面
+
+- **CI 仅安装 minimal deps**：GitHub Actions 的 pytest workflow 默认 `pip install -e .` + `pytest/numpy/scipy`，不会安装 Open3D / PyTorch / LightGlue / GTSAM，因此：
+  - 涉及 heavy deps 的测试需要 `pytest.skip`（目前 frontend smoke test 会在无 open3d 时跳过）。
+- **FAISS 可选依赖**：回环检索优先用 FAISS；若环境无 faiss，会自动 fallback 到 numpy brute-force（会更慢，但功能可用）。
+- **数据集格式差异**：
+  - ICL-NUIM 的 intrinsics 约定中 `fy` 为负；当前实现通过 `flip_y` + `fy>0` 的方式兼容（见 `io/rgbd_io.py`）。如果你自行准备的数据不符合这一假设，可能出现上下颠倒/位姿发散。
+
+### 8.3 当前明显的结构问题
+
+- **harness 仍承担“编排层”职责**：尽管 frontend/loop/backend/io 已基本模块化，但 `harness/run_sequence*.py` 仍负责把各模块串起来、落盘与计时；后续如果要做更严谨的 library/CLI 边界，需要进一步抽象“pipeline runner”。
+- **run_sequence 与 run_sequence_pg 仍有重复**：例如数据读取、seed/track、时间统计等；后续可以合并为一个 runner + 可插拔的 backend/loop 选项。
 
 ### 一句话评价
 
-这是一个“算法链路已经成型、工程抽象还差最后一步”的结构：回环和后端模块化程度不错，但前端仍嵌在运行脚本里，下一步最值得做的是把 tracking/front-end 从 harness 中抽成真正的 frontend 模块。
+这是一个“算法链路已成型、工程抽象逐步收敛”的结构：frontend/loop/backend/io 已成模块，但 runner 仍偏脚本化；下一步最值钱的是把 harness 的编排逻辑抽成可复用 pipeline，并把参数/配置进一步结构化。
