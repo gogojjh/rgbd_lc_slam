@@ -39,11 +39,16 @@
 ## 验证情况
 
 - 已执行验证：
-  - 在 TUM RGB-D 7 条序列与 ICL-NUIM 8 条序列上完成 baseline 跟踪与 loop+PGO 批量运行。
-  - 使用 evo 生成 ATE/RPE 指标（zip）与轨迹相关图；并生成跨数据集汇总表（md/csv）。
-  - 额外生成了轨迹俯瞰对比图（GT / baseline / loop+PGO 叠加）用于定性分析。
-- 验证结果：部分验证（以脚本批量运行与指标产出为主，尚未引入单元测试/CI）。
-- 备注：当前部分序列在 loop+PGO 后出现退化（例如 ICL 的 `office_traj0`），说明回环约束仍需更严格的 gating/鲁棒核策略。
+  - 在 TUM `rgbd_dataset_freiburg1_xyz` 上进行最小验证（前 200 帧）：
+    - baseline：`python -m rgbd_lc_slam.harness.run_sequence --seq_dir data/tum_rgbd/rgbd_dataset_freiburg1_xyz --out_dir results/runs/minval/tum_fr1_xyz_baseline --max_frames 200`
+    - loop+PGO：`python -m rgbd_lc_slam.harness.run_sequence_pg --seq_dir data/tum_rgbd/rgbd_dataset_freiburg1_xyz --out_dir results/runs/minval/tum_fr1_xyz_pgloop --max_frames 200 --enable_loop --device cpu`
+    - APE（align+correct_scale, full）：baseline rmse=0.0575；PGO rmse=0.0670
+  - 在 ICL-NUIM `living_room_traj1_frei_png` 上进行最小验证（前 200 帧）：
+    - baseline：`python -m rgbd_lc_slam.harness.run_sequence --seq_dir data/icl_nuim/sequences/living_room_traj1_frei_png --out_dir results/runs/minval/icl_lr1_baseline --max_frames 200`
+    - loop+PGO：`python -m rgbd_lc_slam.harness.run_sequence_pg --seq_dir data/icl_nuim/sequences/living_room_traj1_frei_png --out_dir results/runs/minval/icl_lr1_pgloop --max_frames 200 --enable_loop --device cpu --exclude_recent 50 --retrieval_top_k 5 --retrieval_min_score 0.97`
+    - APE（align+correct_scale, full）：baseline rmse=0.0251；PGO rmse=0.0528
+- 验证结果：通过（最小验证场景）。
+- 备注：本次验证仅覆盖“跑通链路 + 产出轨迹/指标”，不代表回环一定提升精度；回环约束 gating/鲁棒核策略仍需后续优化。
 
 ## 后续行动
 
