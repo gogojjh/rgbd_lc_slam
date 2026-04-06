@@ -33,6 +33,9 @@ class LoopClosureConfig:
     descriptor_dim: int = 4096
     retrieval_top_k: int = 10
     retrieval_min_score: float = 0.75  # cosine similarity / inner-product on L2-normed desc
+    # If top-1 and top-2 retrieval scores are too close, the match is ambiguous.
+    # Require (top1 - top2) >= margin to proceed to geometric verification.
+    retrieval_min_score_margin: float = 0.0
     exclude_recent: int = 30  # ignore matches to last N frames
 
     # Verification budget (speed)
@@ -47,6 +50,8 @@ class LoopClosureConfig:
     ransac_iters: int = 2000
     ransac_inlier_thresh_m: float = 0.05
     min_inliers: int = 40
+    # Extra quality gate: require enough inliers relative to raw matches.
+    min_inlier_ratio: float = 0.0
     max_rmse_m: float = 0.05
 
     # ICP refinement

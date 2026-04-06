@@ -79,9 +79,11 @@ class LoopClosureModule:
             "fail_reasons": {
                 "min_matches": 0,
                 "pose_estimation": 0,
+                "inlier_ratio": 0,
                 "trans": 0,
                 "rot": 0,
                 "rmse": 0,
+                "ambiguous_retrieval": 0,
             },
             "values": {
                 "retrieval_score": [],
@@ -168,14 +170,27 @@ class LoopClosureModule:
             "n_candidates": n_total,
             "n_pass_score": n_pass_score,
             "n_verified": 0,
+            "ambiguous_retrieval": False,
             "accepted": False,
             "accepted_i": None,
         }
 
-        tried = 0
         for c in candidates:
             self._diag_add_value("retrieval_score", float(c.score))
 
+        if (
+            float(self.cfg.retrieval_min_score_margin) > 0.0
+            and len(candidates) >= 2
+            and (float(candidates[0].score) - float(candidates[1].score)
+                 < float(self.cfg.retrieval_min_score_margin))
+        ):
+            self._diag_fail("ambiguous_retrieval")
+            frame_diag["ambiguous_retrieval"] = True
+            self._diag["per_frame"].append(frame_diag)
+            return None
+
+        tried = 0
+        for c in candidates:
             if c.score < self.cfg.retrieval_min_score:
                 continue
             ref = self._frames.get(c.frame_id, None)
@@ -251,9 +266,14 @@ class LoopClosureModule:
         num_inliers = int(est.inliers.sum())
         rmse = float(est.rmse_m)
 
+        inlier_ratio = float(num_inliers) / float(max(n_matches, 1))
         self._diag_add_value("inliers", num_inliers)
-        self._diag_add_value("inlier_ratio", float(num_inliers) / float(max(n_matches, 1)))
+        self._diag_add_value("inlier_ratio", inlier_ratio)
         self._diag_add_value("rmse_m", rmse)
+
+        if float(self.cfg.min_inlier_ratio) > 0.0 and inlier_ratio < float(self.cfg.min_inlier_ratio):
+            self._diag_fail("inlier_ratio")
+            return None
 
         # 3) gating / sanity checks
         t = T_ij[:3, 3]

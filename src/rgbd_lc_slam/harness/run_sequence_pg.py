@@ -42,6 +42,13 @@ def main() -> None:
     ap.add_argument("--retrieval_top_k", type=int, default=10)
     ap.add_argument("--retrieval_min_score", type=float, default=0.75)
     ap.add_argument(
+        "--retrieval_min_score_margin",
+        type=float,
+        default=0.0,
+        help="Require (top1 - top2) >= margin to verify (Phase2).",
+    )
+    ap.add_argument("--min_inlier_ratio", type=float, default=0.0)
+    ap.add_argument(
         "--loop_every_kf",
         type=int,
         default=5,
@@ -85,7 +92,9 @@ def main() -> None:
         cfg_lc = LoopClosureConfig(
             retrieval_top_k=args.retrieval_top_k,
             retrieval_min_score=args.retrieval_min_score,
+            retrieval_min_score_margin=args.retrieval_min_score_margin,
             exclude_recent=args.exclude_recent,
+            min_inlier_ratio=args.min_inlier_ratio,
         )
         lc = LoopClosureModule(
             intr_lc,
