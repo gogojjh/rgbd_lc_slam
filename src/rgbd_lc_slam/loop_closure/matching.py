@@ -50,6 +50,32 @@ def _best_effort_import_cv2() -> Optional[Any]:
         return None
 
 
+def _has_superpoint_weights() -> bool:
+    """Return True if SuperPoint weights seem present in torch hub cache.
+
+    Motivation: in some environments, LightGlue will try to download weights
+    on first import/instantiation, which can block long runs (no internet / slow).
+
+    If weights are missing, we skip LightGlue and fall back to ORB immediately.
+    """
+
+    torch_home = os.environ.get("TORCH_HOME", str(Path.home() / ".cache" / "torch"))
+    ckdir = Path(torch_home) / "hub" / "checkpoints"
+    if not ckdir.exists():
+        return False
+
+    # Any non-partial file starting with superpoint_v1.pth is treated as available.
+    for p in ckdir.glob("superpoint_v1.pth*"):
+        if p.name.endswith(".partial"):
+            continue
+        try:
+            if p.stat().st_size > 5 * 1024 * 1024:  # heuristic: >5MB
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def _to_gray_np(image: np.ndarray) -> np.ndarray:
     """Convert RGB or grayscale numpy image to grayscale float32 in [0,1]."""
 
@@ -106,6 +132,10 @@ class SuperPointLightGlueMatcher:
         try:
             if self._cv2 is None:
                 raise ImportError("cv2 not available")
+
+            # Avoid blocking downloads in long runs: if weights are missing, use ORB.
+            if not _has_superpoint_weights():
+                raise ImportError("SuperPoint weights not found in cache; skip LightGlue")
 
             _preload_conda_runtime_libs()
             import torch  # type: ignore
