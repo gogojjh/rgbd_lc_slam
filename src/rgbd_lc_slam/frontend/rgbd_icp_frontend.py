@@ -34,7 +34,7 @@ class RGBDICPFrontend:
         self.keyframe_Twc = []
 
     def _pcd_from_frame(self, frame: RGBDFrame) -> o3d.geometry.PointCloud:
-        # Local import for speed only; keep helper in harness/common_rgbd
+        # Local import for speed only; keep helper in io/rgbd_io
         o3d_color = o3d.geometry.Image(frame.rgb.astype(np.uint8))
         o3d_depth = o3d.geometry.Image(frame.depth_m.astype(np.float32))
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
