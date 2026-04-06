@@ -52,6 +52,11 @@ class ISAM2BackendConfig:
         0.05,
     )
 
+    # If True, apply a robust kernel to loop-closure between factors (Phase2).
+    robust_loop_factors: bool = True
+    robust_loop_kernel: str = "huber"  # "huber" | "cauchy"
+    robust_loop_param: float = 1.0
+
     # iSAM2 parameters
     relinearize_threshold: float = 0.01
     relinearize_skip: int = 1
@@ -124,6 +129,18 @@ class PoseGraphISAM2Backend:
     def _key(i: int) -> int:
         return gtsam.symbol("x", int(i))
 
+    def _robustify_if_requested(self, noise, *, is_loop: bool):
+        if not is_loop or not bool(self.cfg.robust_loop_factors):
+            return noise
+
+        kernel = str(self.cfg.robust_loop_kernel).lower()
+        k = float(self.cfg.robust_loop_param)
+        if kernel == "cauchy":
+            robust = gtsam.noiseModel.Robust.Create(gtsam.noiseModel.mEstimator.Cauchy(k), noise)
+        else:
+            robust = gtsam.noiseModel.Robust.Create(gtsam.noiseModel.mEstimator.Huber(k), noise)
+        return robust
+
     def add_prior(self, i: int, Twc: np.ndarray) -> None:
         """Add a prior factor on pose i and initialize the graph."""
         graph = gtsam.NonlinearFactorGraph()
@@ -168,6 +185,9 @@ class PoseGraphISAM2Backend:
             if info.shape != (6, 6):
                 raise ValueError(f"Expected information (6,6), got {info.shape}")
             noise = gtsam.noiseModel.Gaussian.Information(info)
+
+        is_loop = abs(int(j) - int(i)) > 1
+        noise = self._robustify_if_requested(noise, is_loop=is_loop)
 
         graph.add(
             gtsam.BetweenFactorPose3(
