@@ -121,8 +121,9 @@ class RGBDICPFrontend:
             keyframe_rot_deg=self.cfg.keyframe_rot_deg,
         )
         if is_kf:
-            # Add current cloud in world frame
-            src_w = src.transform(self.Twc)
+            # Add current cloud in world frame (avoid in-place modifying `src`)
+            src_w = o3d.geometry.PointCloud(src)
+            src_w.transform(self.Twc)
             self.keyframe_pcds_w.append(src_w)
             self.keyframe_Twc.append(self.Twc.copy())
 
