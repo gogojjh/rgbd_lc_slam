@@ -51,8 +51,28 @@ def main() -> None:
     ap.add_argument(
         "--loop_every_kf",
         type=int,
-        default=5,
+        default=2,
         help="Run loop detection every K keyframes (Phase1 throttling).",
+    )
+
+    # Backend robust kernel for loops
+    ap.add_argument(
+        "--robust_loop_factors",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Apply robust kernel (Huber/Cauchy) to loop closure factors.",
+    )
+    ap.add_argument(
+        "--robust_loop_kernel",
+        type=str,
+        default="huber",
+        help="Robust kernel type for loop factors: huber | cauchy.",
+    )
+    ap.add_argument(
+        "--robust_loop_param",
+        type=float,
+        default=1.0,
+        help="Robust kernel parameter k (GTSAM mEstimator).",
     )
 
     args = ap.parse_args()
@@ -84,7 +104,12 @@ def main() -> None:
     t_loop_ms: list[float] = []
 
     # Setup backend
-    backend = PoseGraphISAM2Backend(ISAM2BackendConfig())
+    backend_cfg = ISAM2BackendConfig(
+        robust_loop_factors=bool(args.robust_loop_factors),
+        robust_loop_kernel=str(args.robust_loop_kernel),
+        robust_loop_param=float(args.robust_loop_param),
+    )
+    backend = PoseGraphISAM2Backend(backend_cfg)
 
     # Setup loop module
     lc = None

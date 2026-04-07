@@ -31,15 +31,15 @@ class CameraIntrinsics:
 class LoopClosureConfig:
     # Retrieval
     descriptor_dim: int = 4096
-    retrieval_top_k: int = 10
+    retrieval_top_k: int = 20
     retrieval_min_score: float = 0.75  # cosine similarity / inner-product on L2-normed desc
     # If top-1 and top-2 retrieval scores are too close, the match is ambiguous.
     # Require (top1 - top2) >= margin to proceed to geometric verification.
     retrieval_min_score_margin: float = 0.0
-    exclude_recent: int = 30  # ignore matches to last N frames
+    exclude_recent: int = 15  # ignore matches to last N frames
 
     # Verification budget (speed)
-    max_verify_per_frame: int = 3
+    max_verify_per_frame: int = 10
 
     # Matching
     max_num_keypoints: int = 2048
@@ -49,10 +49,10 @@ class LoopClosureConfig:
     pose_method: Literal["3d3d", "pnp"] = "3d3d"
     ransac_iters: int = 2000
     ransac_inlier_thresh_m: float = 0.05
-    min_inliers: int = 40
+    min_inliers: int = 100
     # Extra quality gate: require enough inliers relative to raw matches.
     min_inlier_ratio: float = 0.0
-    max_rmse_m: float = 0.015
+    max_rmse_m: float = 0.02
 
     # ICP refinement
     use_icp: bool = False

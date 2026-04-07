@@ -116,6 +116,24 @@ bash scripts/pipeline/run_stage1_all.sh
 - **harness 仍承担“编排层”职责**：尽管 frontend/loop/backend/io 已基本模块化，但 `harness/run_sequence*.py` 仍负责把各模块串起来、落盘与计时；后续如果要做更严谨的 library/CLI 边界，需要进一步抽象“pipeline runner”。
 - **run_sequence 与 run_sequence_pg 仍有重复**：例如数据读取、seed/track、时间统计等；后续可以合并为一个 runner + 可插拔的 backend/loop 选项。
 
-### 一句话评价
+## 9. 最近变更（回环召回 + PGO 鲁棒性）
 
-这是一个“算法链路已成型、工程抽象逐步收敛”的结构：frontend/loop/backend/io 已成模块，但 runner 仍偏脚本化；下一步最值钱的是把 harness 的编排逻辑抽成可复用 pipeline，并把参数/配置进一步结构化。
+- 提高 `num_loops` 的默认倾向：扩大检索 top-k、减少 exclude_recent、增加每帧几何验证预算。
+- PGO 回环因子支持 robust kernel（Huber/Cauchy），并通过 `run_sequence_pg` CLI 暴露：
+  - `--robust_loop_factors/--no-robust_loop_factors`
+  - `--robust_loop_kernel {huber,cauchy}`
+  - `--robust_loop_param <k>`
+
+最小验证（TUM `fr1_xyz`, 200 帧）示例：
+
+```bash
+python -m rgbd_lc_slam.harness.run_sequence_pg \
+  --seq_dir data/tum_rgbd/rgbd_dataset_freiburg1_xyz \
+  --out_dir results/runs/minval/tum_fr1_xyz_pgloop_huber \
+  --max_frames 200 --enable_loop --device cpu \
+  --exclude_recent 15 --retrieval_top_k 20 --retrieval_min_score 0.7 \
+  --min_inlier_ratio 0.35 --loop_every_kf 2 \
+  --robust_loop_factors --robust_loop_kernel huber --robust_loop_param 1.0
+```
+
+- 变更记录：`changelog/2026-04-07_loops_more_robust_pgo.md`
