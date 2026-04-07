@@ -52,7 +52,7 @@ class LoopClosureConfig:
     min_inliers: int = 40
     # Extra quality gate: require enough inliers relative to raw matches.
     min_inlier_ratio: float = 0.0
-    max_rmse_m: float = 0.05
+    max_rmse_m: float = 0.015
 
     # ICP refinement
     use_icp: bool = False
