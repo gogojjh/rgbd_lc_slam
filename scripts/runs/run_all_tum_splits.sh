@@ -5,6 +5,10 @@ ROOT="${1:-data/tum_rgbd}"
 OUT_RUNS_DIR="${2:-results/runs}"  # will create per-seq subdirs
 MAX_FRAMES="${MAX_FRAMES:-100000000}"
 
+# Avoid matplotlib trying to show windows on headless servers
+export MPLBACKEND=Agg
+export PYTHONUNBUFFERED=1
+
 # Map split names (frX/name) -> official tgz + dir
 # NOTE: These URLs are untrusted external data; reviewed/verified by curl -I before use.
 declare -A URLS
@@ -28,15 +32,6 @@ DIRS["fr3/long_office_household"]="rgbd_dataset_freiburg3_long_office_household"
 DIRS["fr3/sitting_static"]="rgbd_dataset_freiburg3_sitting_static"
 
 mkdir -p "$ROOT" "$OUT_RUNS_DIR"
-
-python - <<'PY'
-import yaml
-from pathlib import Path
-p=Path('configs/tum_splits.yaml')
-obj=yaml.safe_load(p.read_text())
-seqs=obj['train']+obj['test']
-print(' '.join(seqs))
-PY
 
 SEQS=$(python - <<'PY'
 import yaml
@@ -78,21 +73,23 @@ for seq in $SEQS; do
   mkdir -p "$run_dir"
 
   echo "[run] $seq_dir -> $run_dir"
-  python -m rgbd_lc_slam.harness.run_sequence \
+  conda run -n rgbd_lc_slam python -m rgbd_lc_slam.harness.run_sequence \
     --seq_dir "$seq_dir" \
     --out_dir "$run_dir" \
     --max_frames "$MAX_FRAMES"
 
   echo "[evo] $seq"
   cp "$seq_dir/groundtruth.txt" "$run_dir/traj_gt_tum.txt"
-  evo_ape tum "$run_dir/traj_gt_tum.txt" "$run_dir/traj_est_tum.txt" \
+
+  conda run -n rgbd_lc_slam evo_ape tum "$run_dir/traj_gt_tum.txt" "$run_dir/traj_est_tum.txt" \
     --align --correct_scale -r full \
     --save_results "$run_dir/evo_ape.zip" \
-    --plot --save_plot "$run_dir/ate_plot.png" >/dev/null
-  evo_rpe tum "$run_dir/traj_gt_tum.txt" "$run_dir/traj_est_tum.txt" \
+    --plot --save_plot "$run_dir/ate_plot.png" --no_warnings >/dev/null
+
+  conda run -n rgbd_lc_slam evo_rpe tum "$run_dir/traj_gt_tum.txt" "$run_dir/traj_est_tum.txt" \
     --align --correct_scale -r full --delta 1 --delta_unit f \
     --save_results "$run_dir/evo_rpe.zip" \
-    --plot --save_plot "$run_dir/rpe_plot.png" >/dev/null
+    --plot --save_plot "$run_dir/rpe_plot.png" --no_warnings >/dev/null
 
 done
 
